@@ -1,0 +1,3 @@
+
+local shared = odh_shared_plugins
+shared.load_from_github_url("/mellnikovden-sketch/Ultra-Instinct-/refs/heads/main/nexus_mm2.lua")
