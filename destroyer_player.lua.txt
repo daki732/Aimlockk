@@ -1,0 +1,1011 @@
+local shared = odh_shared_plugins
+if not shared or shared.game_name ~= "Murder Mystery 2" then
+    if shared and shared.Notify then shared.Notify("187 Reset V5.2: Only works in MM2!", 3) end
+    return
+end
+
+-- ====== Maid ======
+local Maid = {}
+Maid.__index = Maid
+function Maid.new() return setmetatable({_tasks = {}, _destroyed = false}, Maid) end
+function Maid:GiveTask(task)
+    if self._destroyed then self:_cleanupTask(task) return end
+    table.insert(self._tasks, task)
+    return task
+end
+function Maid:_cleanupTask(task)
+    local t = typeof(task)
+    if t == "RBXScriptConnection" then task:Disconnect()
+    elseif t == "Instance" then task:Destroy()
+    elseif t == "function" then task()
+    elseif t == "thread" then pcall(function() task.cancel(task) end)
+    elseif t == "table" and type(task.Destroy) == "function" then task:Destroy()
+    end
+end
+function Maid:DoCleaning()
+    if self._destroyed then return end
+    self._destroyed = true
+    for _, task in ipairs(self._tasks) do self:_cleanupTask(task) end
+    self._tasks = {}
+end
+function Maid:Destroy() self:DoCleaning() end
+local RootMaid = Maid.new()
+
+-- ====== Сервисы ======
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players           = game:GetService("Players")
+local LocalPlayer       = Players.LocalPlayer
+local UserInputService  = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
+local Workspace         = game:GetService("Workspace")
+local TweenService      = game:GetService("TweenService")
+local CoreGui           = game:GetService("CoreGui")
+
+-- ====== Шорткаты ======
+local __UD2  = UDim2.new
+local __UD   = UDim.new
+local __V2   = Vector2.new
+local __PCLR = Color3.new
+local __RGB  = Color3.fromRGB
+
+local function clearTable(t)
+    if table.clear then table.clear(t) else for k in pairs(t) do t[k] = nil end end
+end
+
+local function Notify(title, msg, dur)
+    if shared and shared.Notify then shared.Notify(msg and (title .. ": " .. msg) or title, dur or 3) end
+end
+
+-- ====== Заголовки секций: старые (мусор) / текущие (не трогать) ======
+local OLD_TITLES = {
+    ["187 Reset Player V4.4 - Only Bind Buttons"] = true,
+    ["187 Reset Player V4.5 FIX"] = true,
+    ["187 Reset V5"] = true,
+    ["💀 187 RESET V5"] = true,
+    ["⚡ Quick Actions"] = true,
+    ["🤖 Automation"] = true,
+    ["📋 Lists Management"] = true,
+    ["⚙️ Reset Settings"] = true,
+    ["⚙ Reset Settings"] = true,
+    ["🔄 Bind Buttons (circles)"] = true,
+    ["📊 Status"] = true,
+    ["ℹ️ Info"] = true,
+}
+local CUR_TITLES = {
+    ["💀 187 RESET V5.2"] = true,
+    ["⚡ Reset"] = true,
+    ["🤖 Auto"] = true,
+    ["📋 Lists"] = true,
+    ["⚙️ Tuning"] = true,
+    ["⚙ Tuning"] = true,
+    ["🔘 Binds"] = true,
+    ["ℹ️"] = true,
+}
+local BAD_WORDS = { "Looking for a feature", "Plugins", "Overdrive", "Logged in as", "gg/overdrivehub" }
+
+-- ====== Реестр своих секций (для корректной выгрузки) ======
+local _mySections = {}
+local function AddSection(name)
+    local sec = shared.AddSection(name)
+    _mySections[#_mySections + 1] = { name = name, obj = sec }
+    return sec
+end
+
+-- ====== Очистка дублей секций ======
+local function guiRoots()
+    local roots, seen = {}, {}
+    local function add(r)
+        if typeof(r) == "Instance" and not seen[r] then seen[r] = true; roots[#roots + 1] = r end
+    end
+    pcall(function() add(gethui and gethui()) end)
+    pcall(function() add(getcore and getcore()) end)
+    add(CoreGui)
+    pcall(function() add(LocalPlayer:FindFirstChildOfClass("PlayerGui")) end)
+    return roots
+end
+
+local function cardHasStop(node, stopSet)
+    for _, d in ipairs(node:GetDescendants()) do
+        if d:IsA("TextLabel") then
+            if stopSet[d.Text] then return true end
+            for _, w in ipairs(BAD_WORDS) do
+                if d.Text:find(w, 1, true) then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function cardOf(label, stopSet)
+    local node = label.Parent
+    for _ = 1, 7 do
+        if not node or typeof(node) ~= "Instance" or node == game then return nil end
+        if node:IsA("Frame") or node:IsA("ScrollingFrame") then
+            local framed = node:FindFirstChildOfClass("UIStroke") or node:FindFirstChildOfClass("UICorner")
+            if framed then
+                local sz = node.AbsoluteSize
+                if sz.Y > 0 and sz.Y < 520 and not cardHasStop(node, stopSet) then
+                    return node
+                end
+            end
+        end
+        node = node.Parent
+    end
+    return nil
+end
+
+local function scanAndKill(titleSet, stopSet)
+    local killed, visited = {}, {}
+    for _, root in ipairs(guiRoots()) do
+        local labels = {}
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("TextLabel") then labels[#labels + 1] = d end
+        end
+        for _, label in ipairs(labels) do
+            if label.Parent and titleSet[label.Text] then
+                local card = cardOf(label, stopSet)
+                if card and not killed[card] and not visited[card] then
+                    visited[card] = true
+                    killed[card] = true
+                    pcall(function() card:Destroy() end)
+                end
+            end
+        end
+    end
+    local n = 0
+    for _ in pairs(killed) do n = n + 1 end
+    return n
+end
+
+local function purgeOldSections()  return scanAndKill(OLD_TITLES, CUR_TITLES) end
+local function removeMySections()  return scanAndKill(CUR_TITLES, {}) end
+
+-- срезать мусор, накопленный прошлыми версиями, ещё до построения своего меню
+pcall(purgeOldSections)
+
+-- ====== Bindable Buttons ======
+local BindableButtons = { Buttons = {}, Maids = {}, Count = 0, ResetActive = false, CurrentSize = 0.11 }
+local __SHAPES = {
+    [0] = "rbxassetid://86221076925479",
+    [1] = "rbxassetid://96242665417546",
+    [2] = "rbxassetid://97129189935336",
+    [3] = "rbxassetid://76165862027868",
+    [4] = "rbxassetid://125868092127496",
+}
+local GLOW_IMG = "rbxassetid://131961136"
+
+local __NORMAL_COLOR = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,   __PCLR(0.133333, 0.827451, 0.494118)),
+    ColorSequenceKeypoint.new(0.6, __PCLR(0.231373, 0.509804, 0.498039)),
+    ColorSequenceKeypoint.new(1,   __PCLR(0.501961, 0.501961, 0.501961)),
+})
+local __WAIT_COLOR = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,   __PCLR(0.827451, 0.133333, 0.133333)),
+    ColorSequenceKeypoint.new(0.6, __PCLR(0.509804, 0.231373, 0.231373)),
+    ColorSequenceKeypoint.new(1,   __PCLR(0.501961, 0.501961, 0.501961)),
+})
+local __GOLD_NORMAL_COLOR = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,   __RGB(255, 215, 0)),
+    ColorSequenceKeypoint.new(0.6, __RGB(218, 165, 32)),
+    ColorSequenceKeypoint.new(1,   __RGB(128, 128, 128)),
+})
+local __GOLD_WAIT_COLOR = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,   __RGB(255, 69, 0)),
+    ColorSequenceKeypoint.new(0.6, __RGB(139, 0, 0)),
+    ColorSequenceKeypoint.new(1,   __RGB(128, 128, 128)),
+})
+
+local muteButtonSounds = false
+
+local function bind_safecallback(callback)
+    if not callback then return end
+    local ok, err = xpcall(callback, function(e) return debug.traceback(e) end)
+    if not ok then warn("[BIND ERROR] " .. tostring(err)) end
+end
+
+local function Bind_GetStorage()
+    local parent
+    local ok, res = pcall(function()
+        if gethui then return gethui() end
+        if getcore then return getcore() end
+    end)
+    if ok and typeof(res) == "Instance" then parent = res else parent = CoreGui end
+    if typeof(parent) ~= "Instance" then parent = LocalPlayer:FindFirstChildOfClass("PlayerGui") end
+    if typeof(parent) ~= "Instance" then parent = LocalPlayer:WaitForChild("PlayerGui", 5) end
+    if typeof(parent) ~= "Instance" then parent = CoreGui end
+
+    local sg = parent:FindFirstChild("@bindstorage_v5")
+    if not sg then
+        sg = Instance.new("ScreenGui")
+        sg.Name = "@bindstorage_v5"
+        sg.ResetOnSpawn = false
+        sg.IgnoreGuiInset = true
+        pcall(function() sg.ScreenInsets = Enum.ScreenInsets.None end)
+        if syn and syn.protect_gui then pcall(syn.protect_gui, sg) end
+        sg.Parent = parent
+    end
+    return sg
+end
+
+local function Bind_MakeDraggable(gui, maid, ripple, sound, clickFunc)
+    local dragging, dragInput, dragStart, startPos, hasMoved = false, nil, nil, nil, false
+
+    maid:GiveTask(gui.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos, hasMoved = true, input.Position, gui.Position, false
+            pcall(function() sound:Play() end)
+
+            local absPos = gui.AbsolutePosition
+            ripple.Position = __UD2(0, input.Position.X - absPos.X, 0, input.Position.Y - absPos.Y)
+            ripple.Size = __UD2(0, 0, 0, 0)
+            ripple.BackgroundTransparency = 0.45
+            ripple.Visible = true
+            TweenService:Create(ripple, TweenInfo.new(0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+                Size = __UD2(0, 45, 0, 45), BackgroundTransparency = 1
+            }):Play()
+
+            local rel
+            rel = UserInputService.InputEnded:Connect(function(endInput)
+                if endInput.UserInputType == input.UserInputType then
+                    dragging = false
+                    if not hasMoved then bind_safecallback(clickFunc) end
+                    rel:Disconnect()
+                end
+            end)
+        end
+    end))
+
+    maid:GiveTask(gui.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end))
+
+    maid:GiveTask(UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            if delta.Magnitude > 7 then hasMoved = true end
+            local prt = gui.Parent
+            if prt then
+                local screen = prt.AbsoluteSize
+                gui.Position = __UD2(startPos.X.Scale + (delta.X / screen.X), 0, startPos.Y.Scale + (delta.Y / screen.Y), 0)
+            end
+        end
+    end))
+end
+
+function BindableButtons.AddBButton(id, text, clickFunc, isGold)
+    if BindableButtons.Buttons[id] then return end
+    local buttonMaid = Maid.new()
+
+    local camera = Workspace.CurrentCamera
+    local screen = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+    local h = BindableButtons.CurrentSize or 0.11
+    local w = h * (screen.Y / screen.X)
+    local xPos = 0.08 + ((BindableButtons.Count % 8) * (w + 0.008))
+    local yPos = 0.88 - (math.floor(BindableButtons.Count / 8) * (h + 0.02))
+
+    local glow = Instance.new("ImageLabel")
+    glow.Name = "@glow"
+    glow.Image = GLOW_IMG
+    glow.BackgroundTransparency = 1
+    glow.ImageColor3 = isGold and __RGB(255, 200, 40) or __RGB(40, 220, 140)
+    glow.ImageTransparency = 0.78
+    glow.Size = __UD2(w * 2.5, 0, h * 2.5, 0)
+    glow.Position = __UD2(xPos, 0, yPos, 0)
+    glow.AnchorPoint = __V2(0.5, 0.5)
+    glow.ZIndex = 1
+    glow.Parent = Bind_GetStorage()
+    buttonMaid:GiveTask(glow)
+
+    local ImageButton = Instance.new("ImageButton")
+    ImageButton.Name = id
+    ImageButton.Size = __UD2(w, 0, h, 0)
+    ImageButton.Position = __UD2(xPos, 0, yPos, 0)
+    ImageButton.AnchorPoint = __V2(0.5, 0.5)
+    ImageButton.Image = __SHAPES[0]
+    ImageButton.BackgroundTransparency = 1
+    ImageButton.BorderSizePixel = 0
+    ImageButton.ClipsDescendants = false
+    ImageButton.AutoButtonColor = false
+    ImageButton.ZIndex = 2
+    ImageButton.Parent = Bind_GetStorage()
+    buttonMaid:GiveTask(ImageButton)
+
+    local TextLabel = Instance.new("TextLabel", ImageButton)
+    TextLabel.Name = "@Text"
+    TextLabel.Size = __UD2(0.85, 0, 0.85, 0)
+    TextLabel.Position = __UD2(0.5, 0, 0.5, 0)
+    TextLabel.AnchorPoint = __V2(0.5, 0.5)
+    TextLabel.BackgroundTransparency = 1
+    TextLabel.Font = Enum.Font.FredokaOne
+    TextLabel.Text = text
+    TextLabel.TextColor3 = __PCLR(1, 1, 1)
+    TextLabel.TextStrokeTransparency = 0.5
+    TextLabel.TextStrokeColor3 = __RGB(0, 0, 0)
+    TextLabel.TextSize = 11
+    TextLabel.TextWrapped = true
+    TextLabel.ZIndex = 3
+
+    local Aspect = Instance.new("UIAspectRatioConstraint", ImageButton)
+    Aspect.AspectRatio = 1
+    pcall(function() Aspect.AspectType = Enum.AspectType.ScaleWithParentSize end)
+
+    local Stroke = Instance.new("UIGradient", ImageButton)
+    Stroke.Name = "@Stroke"
+    Stroke.Color = isGold and __GOLD_NORMAL_COLOR or __NORMAL_COLOR
+
+    local ripple = Instance.new("Frame")
+    ripple.Name = "@ripple"
+    ripple.BackgroundColor3 = isGold and __RGB(255, 215, 0) or __RGB(0, 155, 255)
+    ripple.BackgroundTransparency = 0.45
+    ripple.Size = __UD2(0, 0, 0, 0)
+    ripple.AnchorPoint = __V2(0.5, 0.5)
+    ripple.Visible = false
+    ripple.ZIndex = 2
+    ripple.Parent = ImageButton
+    Instance.new("UICorner", ripple).CornerRadius = __UD(1, 0)
+
+    local sound = Instance.new("Sound")
+    sound.Name = "Sound"
+    sound.SoundId = "rbxassetid://3868133279"
+    sound.Volume = muteButtonSounds and 0 or 0.5
+    sound.Parent = ImageButton
+
+    Bind_MakeDraggable(ImageButton, buttonMaid, ripple, sound, clickFunc)
+
+    local hoverVal = Instance.new("NumberValue"); hoverVal.Value = 0
+    local pressVal = Instance.new("NumberValue"); pressVal.Value = 0
+    buttonMaid:GiveTask(hoverVal)
+    buttonMaid:GiveTask(pressVal)
+
+    buttonMaid:GiveTask(ImageButton.MouseEnter:Connect(function()
+        TweenService:Create(hoverVal, TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Value = 1}):Play()
+    end))
+    buttonMaid:GiveTask(ImageButton.MouseLeave:Connect(function()
+        TweenService:Create(hoverVal, TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Value = 0}):Play()
+    end))
+    buttonMaid:GiveTask(ImageButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            TweenService:Create(pressVal, TweenInfo.new(0.08), {Value = 1}):Play()
+        end
+    end))
+    buttonMaid:GiveTask(UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            TweenService:Create(pressVal, TweenInfo.new(0.15), {Value = 0}):Play()
+        end
+    end))
+
+    buttonMaid:GiveTask(RunService.RenderStepped:Connect(function()
+        local cam = Workspace.CurrentCamera
+        local scr = cam and cam.ViewportSize or Vector2.new(1920, 1080)
+        local bh = BindableButtons.CurrentSize or 0.11
+        local bw = bh * (scr.Y / scr.X)
+        local scale = 1 + hoverVal.Value * 0.14 - pressVal.Value * 0.10
+
+        ImageButton.Size = __UD2(bw * scale, 0, bh * scale, 0)
+        glow.Size = __UD2(bw * 2.5, 0, bh * 2.5, 0)
+        glow.Position = ImageButton.Position
+
+        local t = os.clock()
+        local activePulse = BindableButtons.ResetActive and (math.sin(t * 7) * 0.5 + 0.5) * 0.3 or 0
+        local hoverGlow = hoverVal.Value * 0.28
+        glow.ImageTransparency = math.clamp(0.78 - hoverGlow - activePulse, 0.25, 1)
+
+        Stroke.Rotation = (Stroke.Rotation + (BindableButtons.ResetActive and 3.5 or 1.1)) % 360
+    end))
+
+    BindableButtons.Buttons[id] = ImageButton
+    BindableButtons.Maids[id] = buttonMaid
+    BindableButtons.Count = BindableButtons.Count + 1
+    return ImageButton
+end
+
+function BindableButtons.DeleteBButton(id)
+    if BindableButtons.Maids[id] then
+        BindableButtons.Maids[id]:Destroy()
+        BindableButtons.Maids[id] = nil
+        BindableButtons.Buttons[id] = nil
+    end
+end
+
+function BindableButtons.UpdateBButtonText(id, text, isWaiting, isGold)
+    local btn = BindableButtons.Buttons[id]
+    if not btn then return end
+    local textLabel = btn:FindFirstChild("@Text")
+    if textLabel then textLabel.Text = text end
+    local stroke = btn:FindFirstChild("@Stroke")
+    if stroke then
+        if isGold then stroke.Color = isWaiting and __GOLD_WAIT_COLOR or __GOLD_NORMAL_COLOR
+        else stroke.Color = isWaiting and __WAIT_COLOR or __NORMAL_COLOR end
+    end
+end
+
+-- ====== Живой статус-HUD ======
+local StatusHUD = { frame = nil, dot = nil, label = nil, stroke = nil, state = "idle" }
+
+function StatusHUD.Init()
+    local sg = Bind_GetStorage()
+
+    local frame = Instance.new("Frame")
+    frame.Name = "@statushud"
+    frame.Size = __UD2(0, 0, 0, 26)
+    frame.AutomaticSize = Enum.AutomaticSize.X
+    frame.Position = __UD2(0.5, 0, 0, 6)
+    frame.AnchorPoint = __V2(0.5, 0)
+    frame.BackgroundColor3 = __RGB(12, 14, 18)
+    frame.BackgroundTransparency = 0.12
+    frame.BorderSizePixel = 0
+    frame.ZIndex = 10
+    frame.Parent = sg
+    Instance.new("UICorner", frame).CornerRadius = __UD(1, 0)
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = __RGB(40, 220, 140)
+    stroke.Thickness = 1
+    stroke.Transparency = 0.25
+    stroke.Parent = frame
+
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new(__RGB(20, 24, 30), __RGB(10, 12, 16))
+    grad.Rotation = 90
+    grad.Parent = frame
+
+    local list = Instance.new("UIListLayout")
+    list.FillDirection = Enum.FillDirection.Horizontal
+    list.VerticalAlignment = Enum.VerticalAlignment.Center
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.Padding = __UD(0, 7)
+    list.Parent = frame
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = __UD(0, 10); pad.PaddingRight = __UD(0, 12)
+    pad.PaddingTop = __UD(0, 6);  pad.PaddingBottom = __UD(0, 6)
+    pad.Parent = frame
+
+    local dot = Instance.new("Frame")
+    dot.LayoutOrder = 1
+    dot.Size = __UD2(0, 8, 0, 8)
+    dot.BackgroundColor3 = __RGB(40, 220, 140)
+    dot.BorderSizePixel = 0
+    dot.ZIndex = 11
+    dot.Parent = frame
+    Instance.new("UICorner", dot).CornerRadius = __UD(1, 0)
+
+    local label = Instance.new("TextLabel")
+    label.LayoutOrder = 2
+    label.Size = __UD2(0, 0, 0, 14)
+    label.AutomaticSize = Enum.AutomaticSize.X
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamBold
+    label.Text = "IDLE"
+    label.TextColor3 = __RGB(200, 215, 230)
+    label.TextSize = 12
+    label.ZIndex = 11
+    label.Parent = frame
+
+    StatusHUD.frame, StatusHUD.dot, StatusHUD.label, StatusHUD.stroke = frame, dot, label, stroke
+
+    RootMaid:GiveTask(RunService.RenderStepped:Connect(function()
+        if not StatusHUD.dot then return end
+        local pulse = math.sin(os.clock() * 4) * 0.5 + 0.5
+        if StatusHUD.state == "active" then
+            StatusHUD.dot.BackgroundColor3 = __RGB(255, 70, 70)
+            StatusHUD.dot.Size = __UD2(0, 8 + pulse * 3, 0, 8 + pulse * 3)
+            StatusHUD.stroke.Color = __RGB(255, 70, 70)
+        else
+            StatusHUD.dot.BackgroundColor3 = __RGB(40, 220, 140)
+            StatusHUD.dot.Size = __UD2(0, 8 + pulse * 1.5, 0, 8 + pulse * 1.5)
+            StatusHUD.stroke.Color = __RGB(40, 220, 140)
+        end
+    end))
+end
+
+function StatusHUD.Set(newState, targetName)
+    StatusHUD.state = newState
+    if not StatusHUD.label then return end
+    if newState == "active" then
+        StatusHUD.label.Text = "RESET ▸ " .. (targetName or "?")
+        StatusHUD.label.TextColor3 = __RGB(255, 120, 120)
+    else
+        StatusHUD.label.Text = "IDLE"
+        StatusHUD.label.TextColor3 = __RGB(200, 215, 230)
+    end
+end
+
+-- ====== Конфигурация ======
+local config = {
+    maxRetries        = 3,
+    retryDelay        = 0.18,
+    auraStuds         = 15,
+    resetDuration     = 0.55,
+    autoSheriffDelay  = 0.25,
+    autoMurdererDelay = 0.35,
+    loopInterval      = 0.4,
+    auraInterval      = 0.4,
+    bindButtonSize    = 0.11,
+}
+
+local state = { whitelist = {}, selectedPlayers = {}, resetSelPlr = nil }
+local maids = { loopPlr = nil, clickReset = nil, resetAura = nil, autoSheriff = nil, autoMurderer = nil }
+
+local currentReset = nil
+local function cancelCurrentReset()
+    if currentReset and currentReset.cancel then pcall(currentReset.cancel) end
+    currentReset = nil
+end
+
+-- ====== Кэш ролей ======
+local roleCache = { data = nil, timestamp = 0, TTL = 0.8 }
+local function getCachedRoleData()
+    local now = os.clock()
+    if roleCache.data and (now - roleCache.timestamp) < roleCache.TTL then return roleCache.data end
+    local ok, result = pcall(function()
+        local remote = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+        if remote and remote:IsA("RemoteFunction") then return remote:InvokeServer() end
+    end)
+    if ok and result then
+        roleCache.data, roleCache.timestamp = result, now
+        return result
+    end
+    roleCache.timestamp = now
+    return roleCache.data
+end
+
+local function isValidTarget(player)
+    return player and player ~= LocalPlayer and player.Parent
+        and not state.whitelist[player.UserId]
+        and player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getSelectedOrFirst()
+    if isValidTarget(state.resetSelPlr) then return state.resetSelPlr end
+    for _, player in ipairs(state.selectedPlayers) do
+        if isValidTarget(player) then return player end
+    end
+    return nil
+end
+
+local function quickScanSheriff()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            if char then
+                if char:FindFirstChild("Gun") or char:FindFirstChild("Revolver") then
+                    if not state.whitelist[player.UserId] then return player end
+                end
+                local tool = char:FindFirstChildOfClass("Tool")
+                if tool then
+                    local name = tool.Name:lower()
+                    if name:find("gun") or name:find("revolver") then
+                        if not state.whitelist[player.UserId] then return player end
+                    end
+                end
+            end
+            local bp = player:FindFirstChild("Backpack")
+            if bp and (bp:FindFirstChild("Gun") or bp:FindFirstChild("Revolver")) then
+                if not state.whitelist[player.UserId] then return player end
+            end
+        end
+    end
+    return nil
+end
+
+local function findTargetByRole(roleName)
+    local roleData = getCachedRoleData()
+    if roleData then
+        for playerName, data in pairs(roleData) do
+            if data.Role == roleName and not data.Killed and not data.Dead then
+                local p = Players:FindFirstChild(playerName)
+                if p and p ~= LocalPlayer and not state.whitelist[p.UserId] then return p end
+            end
+        end
+    end
+    return nil
+end
+
+local function findSheriff()
+    local quick = quickScanSheriff()
+    if quick and quick ~= LocalPlayer and not state.whitelist[quick.UserId] then return quick end
+    return findTargetByRole("Sheriff")
+end
+local function findMurderer() return findTargetByRole("Murderer") end
+
+-- ====== Касания / восстановление ======
+local function touch(a, b)
+    if not a or not b then return end
+    if type(firetouchinterest) ~= "function" then return end
+    pcall(function()
+        for _ = 1, 3 do
+            firetouchinterest(a, b, 0)
+            firetouchinterest(a, b, 1)
+        end
+    end)
+end
+
+local function restoreSelf(character, savedData, originalDestroyHeight)
+    pcall(function()
+        Workspace.FallenPartsDestroyHeight = originalDestroyHeight
+        if not character or not savedData then return end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        local rootPart = character:FindFirstChild("HumanoidRootPart")
+        if not humanoid or not rootPart then return end
+        rootPart.CFrame = savedData.cframe
+        rootPart.AssemblyLinearVelocity = Vector3.zero
+        rootPart.AssemblyAngularVelocity = Vector3.zero
+        humanoid.PlatformStand = false
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        if humanoid.Health < humanoid.MaxHealth then humanoid.Health = humanoid.MaxHealth end
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = true end
+        end
+    end)
+    pcall(function() Workspace.FallenPartsDestroyHeight = originalDestroyHeight end)
+end
+
+-- ====== Главная функция сброса ======
+local function VoidReset(TargetPlayer, _retryCount)
+    if not TargetPlayer or not TargetPlayer.Parent then return end
+    if TargetPlayer == LocalPlayer or state.whitelist[TargetPlayer.UserId] then return end
+    _retryCount = _retryCount or 0
+    cancelCurrentReset()
+
+    local Character = LocalPlayer.Character
+    if not Character then return end
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Humanoid and Humanoid.RootPart
+    local TCharacter = TargetPlayer.Character
+    local TRootPart = TCharacter and TCharacter:FindFirstChild("HumanoidRootPart")
+    local THead = TCharacter and TCharacter:FindFirstChild("Head")
+    if not (Humanoid and RootPart and TRootPart) then return end
+
+    local touchParts = {}
+    local partPriority = {"RightHand","LeftHand","RightFoot","LeftFoot","Right Arm","Left Arm","Right Leg","Left Leg","Torso","HumanoidRootPart","Head"}
+    for _, name in ipairs(partPriority) do
+        local p = TCharacter:FindFirstChild(name)
+        if p and p:IsA("BasePart") then table.insert(touchParts, p) end
+    end
+    if #touchParts == 0 then table.insert(touchParts, TRootPart) end
+
+    local savedData = { cframe = RootPart.CFrame }
+    local originalDestroyHeight = Workspace.FallenPartsDestroyHeight
+    Workspace.FallenPartsDestroyHeight = -math.huge
+    Humanoid.PlatformStand = true
+
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.Velocity = Vector3.new(0, -200000, 0)
+    bv.Parent = RootPart
+
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bg.P = 9e8; bg.D = 9e8
+    bg.CFrame = RootPart.CFrame
+    bg.Parent = RootPart
+
+    local startTime = os.clock()
+    local frameCount = 0
+    local done = false
+    local resetObj = { bv = bv, bg = bg, conn = nil }
+
+    local function cleanup(success, manual)
+        if done then return end
+        done = true
+        if currentReset == resetObj then currentReset = nil end
+        if resetObj.conn then pcall(function() resetObj.conn:Disconnect() end) end
+        pcall(function() bv:Destroy() end)
+        pcall(function() bg:Destroy() end)
+        restoreSelf(Character, savedData, originalDestroyHeight)
+        StatusHUD.Set("idle")
+        BindableButtons.ResetActive = false
+        if not success and not manual and _retryCount < config.maxRetries then
+            task.delay(config.retryDelay, function()
+                if TargetPlayer and TargetPlayer.Parent and not state.whitelist[TargetPlayer.UserId] then
+                    VoidReset(TargetPlayer, _retryCount + 1)
+                end
+            end)
+        end
+    end
+
+    resetObj.cancel = function() cleanup(true, true) end
+    currentReset = resetObj
+
+    StatusHUD.Set("active", TargetPlayer.Name)
+    BindableButtons.ResetActive = true
+
+    resetObj.conn = RunService.Heartbeat:Connect(function()
+        frameCount += 1
+        if TargetPlayer.Character ~= TCharacter or not TRootPart.Parent then cleanup(true) return end
+        if os.clock() - startTime >= config.resetDuration or not Character.Parent or not RootPart.Parent then cleanup(false) return end
+
+        local angle = (os.clock() - startTime) * (math.pi * 20)
+        local dynamicOffset = Vector3.new(math.cos(angle) * 1.5, math.sin(angle) * 1.5, math.sin(angle) * 1.5)
+        RootPart.CFrame = CFrame.new(TRootPart.Position + dynamicOffset)
+        RootPart.AssemblyLinearVelocity = Vector3.new(200000, -200000, 200000)
+        RootPart.AssemblyAngularVelocity = Vector3.new(20000, 20000, 20000)
+
+        if frameCount % 2 == 1 then
+            for _ = 1, 2 do
+                for _, part in ipairs(touchParts) do touch(RootPart, part) end
+            end
+        else
+            touch(RootPart, TRootPart)
+            if THead then touch(RootPart, THead) end
+        end
+
+        if type(sethiddenproperty) == "function" then
+            pcall(sethiddenproperty, RootPart, "PhysicsRepRootPart", TRootPart)
+        end
+        if Humanoid.Health < Humanoid.MaxHealth * 0.5 then
+            pcall(function() Humanoid.Health = Humanoid.MaxHealth end)
+        end
+    end)
+end
+
+-- ====== Авто-сброс ======
+local function setupAutoTarget(maidKey, finderFunc, interval)
+    return function(enabled)
+        if maids[maidKey] then maids[maidKey]:Destroy() end
+        if enabled then
+            maids[maidKey] = Maid.new()
+            local active = true
+            maids[maidKey]:GiveTask(function() active = false end)
+            task.spawn(function()
+                while active do
+                    local target = nil
+                    pcall(function()
+                        target = finderFunc()
+                        if target then VoidReset(target) end
+                    end)
+                    if target then task.wait(math.max(interval, config.resetDuration + 0.08))
+                    else task.wait(interval) end
+                end
+            end)
+        end
+    end
+end
+
+-- ====== МЕНЮ (компактное, без дублей) ======
+local mainSection = AddSection("💀 187 RESET V5.2")
+mainSection:AddLabel("MM2 • Void Reset • auto-dedup")
+
+local actionSection = AddSection("⚡ Reset")
+actionSection:AddButton("🔫 Sheriff", function()
+    local t = findSheriff()
+    if t then VoidReset(t) else Notify("Error", "Sheriff not found", 3) end
+end)
+actionSection:AddButton("🔪 Murderer", function()
+    local t = findMurderer()
+    if t then VoidReset(t) else Notify("Error", "Murderer not found", 3) end
+end)
+actionSection:AddButton("👥 Everyone", function()
+    task.spawn(function()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if isValidTarget(p) then VoidReset(p); task.wait(config.resetDuration + 0.1) end
+        end
+    end)
+    Notify("Action", "Resetting all non-whitelisted...", 2)
+end)
+actionSection:AddButton("🎯 Selected", function()
+    local t = getSelectedOrFirst()
+    if t then VoidReset(t) else Notify("Quick", "No valid selected player", 2) end
+end)
+actionSection:AddButton("⏹ Cancel", function()
+    cancelCurrentReset()
+    Notify("Quick", "Reset cancelled", 2)
+end)
+actionSection:AddPlayerDropdown("▸ Pick player", function(p)
+    if p and p ~= LocalPlayer then
+        state.resetSelPlr = p
+        if state.whitelist[p.UserId] then Notify("Whitelist", p.Name .. " is whitelisted!", 3)
+        else VoidReset(p); Notify("Action", "Resetting " .. p.Name, 2) end
+    end
+end)
+
+local autoSection = AddSection("🤖 Auto")
+autoSection:AddToggle("Auto Sheriff", setupAutoTarget("autoSheriff", findSheriff, config.autoSheriffDelay))
+autoSection:AddToggle("Auto Murderer", setupAutoTarget("autoMurderer", findMurderer, config.autoMurdererDelay))
+autoSection:AddToggle("Loop", function(enabled)
+    if maids.loopPlr then maids.loopPlr:Destroy() end
+    if enabled then
+        maids.loopPlr = Maid.new()
+        local active = true
+        local loopIndex = 1
+        maids.loopPlr:GiveTask(function() active = false end)
+        task.spawn(function()
+            while active do
+                local target = nil
+                pcall(function()
+                    if isValidTarget(state.resetSelPlr) then
+                        target = state.resetSelPlr
+                    elseif #state.selectedPlayers > 0 then
+                        for _ = 1, #state.selectedPlayers do
+                            loopIndex = ((loopIndex - 1) % #state.selectedPlayers) + 1
+                            local p = state.selectedPlayers[loopIndex]
+                            if isValidTarget(p) then target = p break end
+                        end
+                    end
+                    if target then VoidReset(target) end
+                end)
+                if target then task.wait(math.max(config.loopInterval, config.resetDuration + 0.08))
+                else task.wait(config.loopInterval) end
+            end
+        end)
+    end
+end)
+autoSection:AddToggle("Aura", function(enabled)
+    if maids.resetAura then maids.resetAura:Destroy() end
+    if enabled then
+        maids.resetAura = Maid.new()
+        local active = true
+        maids.resetAura:GiveTask(function() active = false end)
+        task.spawn(function()
+            while active do
+                local target = nil
+                pcall(function()
+                    local rootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    if rootPart then
+                        for _, player in ipairs(Players:GetPlayers()) do
+                            if isValidTarget(player) then
+                                local tr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                                if tr and (rootPart.Position - tr.Position).Magnitude <= config.auraStuds then
+                                    target = player break
+                                end
+                            end
+                        end
+                    end
+                    if target then VoidReset(target) end
+                end)
+                if target then task.wait(math.max(config.auraInterval, config.resetDuration + 0.08))
+                else task.wait(config.auraInterval) end
+            end
+        end)
+    end
+end)
+autoSection:AddToggle("Click", function(enabled)
+    if maids.clickReset then maids.clickReset:Destroy() end
+    if enabled then
+        maids.clickReset = Maid.new()
+        local function onInput(input, processed)
+            if processed then return end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                local target = LocalPlayer:GetMouse().Target
+                local character = target and target:FindFirstAncestorWhichIsA("Model")
+                local player = character and Players:GetPlayerFromCharacter(character)
+                if player and player ~= LocalPlayer then
+                    state.resetSelPlr = player
+                    if state.whitelist[player.UserId] then Notify("Click", player.Name .. " is whitelisted!", 3)
+                    else VoidReset(player); Notify("Click", "Resetting " .. player.Name, 2) end
+                end
+            end
+        end
+        maids.clickReset:GiveTask(UserInputService.InputBegan:Connect(onInput))
+    end
+end)
+
+local listSection = AddSection("📋 Lists")
+listSection:AddPlayerDropdown("🎯 Select", function(p)
+    if p and p ~= LocalPlayer then state.resetSelPlr = p; Notify("Selected", p.Name .. " set", 3) end
+end)
+listSection:AddPlayerDropdown("➕ Loop", function(p)
+    if p and p ~= LocalPlayer then
+        state.resetSelPlr = p
+        local exists = false
+        for _, sel in ipairs(state.selectedPlayers) do if sel.UserId == p.UserId then exists = true break end end
+        if not exists then table.insert(state.selectedPlayers, p); Notify("Selected", p.Name .. " added", 3) end
+    end
+end)
+listSection:AddButton("🧹 Clear loop", function() clearTable(state.selectedPlayers); Notify("Selected", "Cleared", 3) end)
+listSection:AddPlayerDropdown("🛡 Whitelist", function(p)
+    if p and p ~= LocalPlayer then state.whitelist[p.UserId] = true; Notify("Whitelist", p.Name .. " added", 3) end
+end)
+listSection:AddButton("🧹 Clear WL", function() clearTable(state.whitelist); Notify("Whitelist", "Cleared", 3) end)
+
+local settingsSection = AddSection("⚙️ Tuning")
+settingsSection:AddSlider("Max Retries", 0, 5, config.maxRetries, function(v) config.maxRetries = v end)
+settingsSection:AddSlider("Retry Delay (x0.1s)", 1, 10, config.retryDelay * 10, function(v) config.retryDelay = v * 0.1 end)
+settingsSection:AddSlider("Reset Duration (s)", 0.2, 1.0, config.resetDuration, function(v) config.resetDuration = v end)
+settingsSection:AddSlider("Aura Radius (studs)", 5, 50, config.auraStuds, function(v) config.auraStuds = v end)
+settingsSection:AddSlider("Loop Interval (s)", 0.1, 1.0, config.loopInterval, function(v) config.loopInterval = v end)
+settingsSection:AddSlider("Aura Interval (s)", 0.1, 1.0, config.auraInterval, function(v) config.auraInterval = v end)
+
+local floatSection = AddSection("🔘 Binds")
+floatSection:AddToggle("SFX 🔇", function(bool)
+    muteButtonSounds = bool
+    for _, btn in pairs(BindableButtons.Buttons) do
+        local sound = btn:FindFirstChild("Sound")
+        if sound then sound.Volume = muteButtonSounds and 0 or 0.5 end
+    end
+end)
+
+local function toggleBindButton(actionId, shortText, actionFunc)
+    return function(enabled)
+        local id = "bind_" .. actionId
+        if enabled then BindableButtons.AddBButton(id, shortText, actionFunc, false)
+        else BindableButtons.DeleteBButton(id) end
+    end
+end
+
+local actions = {
+    sheriff = {
+        name = "Sheriff", short = "Sh",
+        func = function()
+            local t = findSheriff()
+            if t then VoidReset(t) else Notify("Error", "Sheriff not found", 3) end
+        end,
+    },
+    murderer = {
+        name = "Murderer", short = "Mur",
+        func = function()
+            local t = findMurderer()
+            if t then VoidReset(t) else Notify("Error", "Murderer not found", 3) end
+        end,
+    },
+    all = {
+        name = "All(w)", short = "All",
+        func = function()
+            task.spawn(function()
+                for _, p in pairs(Players:GetPlayers()) do
+                    if isValidTarget(p) then
+                        VoidReset(p)
+                        task.wait(config.resetDuration + 0.1)
+                    end
+                end
+            end)
+            Notify("Action", "Resetting all non-whitelisted...", 2)
+        end,
+    },
+    selected = {
+        name = "Selected", short = "Sel",
+        func = function()
+            local t = getSelectedOrFirst()
+            if t then VoidReset(t) else Notify("Quick", "No valid selected player", 2) end
+        end,
+    },
+    cancel = {
+        name = "Cancel", short = "Can",
+        func = function()
+            cancelCurrentReset()
+            Notify("Quick", "Reset cancelled", 2)
+        end,
+    },
+}
+for id, data in pairs(actions) do
+    floatSection:AddToggle("Bind " .. data.name, toggleBindButton(id, data.short, data.func))
+end
+floatSection:AddSlider("Bind Size (%)", 5, 25, 11, function(value)
+    config.bindButtonSize = value / 100
+    BindableButtons.CurrentSize = value / 100
+end)
+
+local infoSection = AddSection("ℹ️")
+infoSection:AddButton("🧹 Clean duplicates", function()
+    local n = purgeOldSections()
+    Notify("Clean", "Removed " .. n .. " duplicate section(s)", 3)
+end)
+infoSection:AddLabel("v5.2 • auto-dedup on load")
+infoSection:AddLabel("HUD top • Binds drag")
+
+-- ====== Повторная чистка (ловит поздно загрузившиеся старые секции) ======
+task.spawn(function()
+    task.wait(1.5); pcall(purgeOldSections)
+    task.wait(2.5); pcall(purgeOldSections)
+    task.wait(3.0); pcall(purgeOldSections)
+end)
+
+-- ====== Очистка при выгрузке (теперь убирает и свои секции) ======
+RootMaid:GiveTask(function()
+    cancelCurrentReset()
+    for _, m in pairs(maids) do if m then m:Destroy() end end
+    clearTable(state.whitelist)
+    clearTable(state.selectedPlayers)
+    local ids = {}
+    for id in pairs(BindableButtons.Buttons) do table.insert(ids, id) end
+    for _, id in ipairs(ids) do BindableButtons.DeleteBButton(id) end
+    pcall(removeMySections)
+    pcall(function() Bind_GetStorage():Destroy() end)
+end)
+
+-- ====== Запуск ======
+StatusHUD.Init()
+Notify("187 Reset", "V5.2 loaded. Duplicates auto-cleaned.", 3)
