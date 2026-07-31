@@ -1,0 +1,148 @@
+local shared = odh_shared_plugins
+local section = shared.AddSection("Omega Shadow Auto Revert Ω")
+
+local internal_shared = odh_internal_shared
+local gpl_preset = internal_shared.MM2_GPL
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local enabled = false
+local currentProfile = ""
+
+local function GetPing()
+    local ping = LocalPlayer:GetNetworkPing()
+    return math.floor((ping > 0 and ping or 0.06) * 1000)
+end
+
+local function GetOmegaConfig(ping)
+
+    if ping <= 40 then
+        return {
+            Name = "NEURO FROST Ω",
+
+            Vertical = 150,
+            Horizontal = 160,
+
+            X = -5,
+            Y = -13,
+            Z = 0,
+
+            Sim = 52,
+            Interval = 68
+        }
+
+    elseif ping <= 80 then
+        return {
+            Name = "40-80 ELITE Ω",
+
+            Vertical = 164,
+            Horizontal = 178,
+
+            X = -8,
+            Y = -16,
+            Z = 0,
+
+            Sim = 70,
+            Interval = 72
+        }
+
+    elseif ping <= 120 then
+        return {
+            Name = "80-120 SPECIALIST Ω",
+
+            Vertical = 168,
+            Horizontal = 180,
+
+            X = -8,
+            Y = -16,
+            Z = 0,
+
+            Sim = 76,
+            Interval = 78
+        }
+
+    else
+        return {
+            Name = "OMEGA ZERO Ω",
+
+            Vertical = 174,
+            Horizontal = 182,
+
+            X = -10,
+            Y = -16,
+            Z = 0,
+
+            Sim = 84,
+            Interval = 84
+        }
+    end
+end
+
+local function ApplyConfig(cfg)
+
+    -- Prioritize Your Ping
+    if not internal_shared["RevertSettings_PrioritizeYourPing"] then
+        gpl_preset[1]()
+    end
+
+    -- Predict Jump
+    if not internal_shared["RevertSettings_PredictJump"] then
+        gpl_preset[2]()
+    end
+
+    -- Predict Lag
+    if not internal_shared["RevertSettings_PredictLag"] then
+        gpl_preset[3]()
+    end
+
+    gpl_preset[4](cfg.Sim)
+    gpl_preset[5](cfg.Interval)
+
+    gpl_preset[7](cfg.X)
+    gpl_preset[8](cfg.Y)
+    gpl_preset[9](cfg.Z)
+
+    gpl_preset[10](cfg.Horizontal)
+    gpl_preset[11](cfg.Vertical)
+end
+
+section:AddToggle("Enable Auto Revert Ω", function(state)
+    enabled = state
+
+    if state then
+        print("[OMEGA] Auto Revert Enabled")
+    else
+        print("[OMEGA] Auto Revert Disabled")
+    end
+end)
+
+section:AddLabel("Auto-switches configs based on ping")
+section:AddLabel("0-40 | 40-80 | 80-120 | 120+")
+
+task.spawn(function()
+
+    while task.wait(2) do
+
+        if not enabled then
+            continue
+        end
+
+        local ping = GetPing()
+        local cfg = GetOmegaConfig(ping)
+
+        ApplyConfig(cfg)
+
+        if currentProfile ~= cfg.Name then
+            currentProfile = cfg.Name
+
+            print(
+                string.format(
+                    "[OMEGA] %s Applied | Ping: %d",
+                    cfg.Name,
+                    ping
+                )
+            )
+        end
+    end
+end)
